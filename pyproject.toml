@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crawler-kit"
+version = "1.1.1"
+description = "自用采集框架：全局限速、原地退避、断点续采、幂等落盘、插件式签名、TLS 指纹、并发"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+# 只有换传输层时才需要；核心零依赖
+curl = ["curl-cffi>=0.10"]
+
+[tool.setuptools.packages.find]
+include = ["crawler_kit*"]
