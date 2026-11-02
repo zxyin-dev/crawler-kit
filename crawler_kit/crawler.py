@@ -388,8 +388,8 @@ class Crawler:
 
     def _run_pages_concurrent(self, pages: Sequence[int], checkpoint: Checkpoint,
                               store: Any, failed: list[int], workers: int) -> None:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from concurrent.futures import CancelledError
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
         if self.config.verbose:
             log.info("并发采集：{} 个 worker，共 {} 页", workers, len(pages))
@@ -399,33 +399,39 @@ class Crawler:
         abort: BaseException | None = None
         with ThreadPoolExecutor(max_workers=workers,
                                 thread_name_prefix="crawler") as pool:
-            futures = {pool.submit(self._run_page, page): page for page in pages}
-            for future in as_completed(futures):
-                page = futures[future]
-                try:
-                    stat, outcome = future.result()
-                except CancelledError:
-                    # 中止/提前停止时取消掉的页，根本没发请求。
-                    # 把它记成 failed 会凭空多出一个失败页，跳过才是实话。
-                    continue
-                except BaseException as exc:
-                    # 单页崩掉不该拖垮整轮 —— 但要看崩的是哪种。
-                    # _run_page 内部已经把"传输失败""解析失败"降级成页级失败，
-                    # 所以能冒到这里的是插件自己抛的**中止信号**（淘宝风控就是这么
-                    # 做的：classify 抛 RiskControlError，穿透到 CLI 变成退出码 3）。
-                    # 早先这里一律吞成 failed，结果并发模式下风控被吞掉：继续把
-                    # 剩下所有页打完，白送违规次数。所以记下来，等 pool 收尾后再抛。
-                    abort = exc
-                    stat, outcome = (PageStat(page, "failed",
-                                              error=f"{type(exc).__name__}: {exc}",
-                                              fatal=True),
-                                     None)
-                self._commit(stat, outcome, checkpoint, store, failed)
-                if abort is not None or self._stop_event.is_set():
-                    # 中止 / 提前停止：取消还没开跑的页。已在飞的那几页无法取消，
-                    # 它们的记录仍会落盘 —— 多采几页不是错误，漏采才是。
-                    for pending in futures:
-                        pending.cancel()
+            # 只提交「当前空出来的 worker 数」，不预先排满整个队列。
+            # 早先是先把全部页 submit 进队列、中止时再 cancel()，可等主线程看到
+            # abort 时，空闲 worker 已经从队列里又领走一页 —— 并发 3 时实测
+            # 会多打 1-2 页，风控场景下这些就是白送的违规次数，而且多运一页
+            # 就要多一次真实请求，测试也会偶发红。按需提交把这个窗口直接消掉：
+            # abort 之后主线程不再提交，在飞的至多 workers 页。
+            remaining = deque(pages)
+            inflight: dict[Any, int] = {}
+            while remaining or inflight:
+                while (remaining and len(inflight) < workers
+                       and abort is None and not self._stop_event.is_set()):
+                    page = remaining.popleft()
+                    inflight[pool.submit(self._run_page, page)] = page
+                if not inflight:
+                    break
+                done, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    page = inflight.pop(future)
+                    try:
+                        stat, outcome = future.result()
+                    except BaseException as exc:
+                        # 单页崩掉不该拖垮整轮 —— 但要看崩的是哪种。
+                        # _run_page 内部已经把"传输失败""解析失败"降级成页级失败，
+                        # 所以能冒到这里的是插件自己抛的**中止信号**（淘宝风控就是这么
+                        # 做的：classify 抛 RiskControlError，穿透到 CLI 变成退出码 3）。
+                        # 早先这里一律吞成 failed，结果并发模式下风控被吞掉：继续把
+                        # 剩下所有页打完，白送违规次数。所以记下来，等 pool 收尾后再抛。
+                        abort = exc
+                        stat, outcome = (PageStat(page, "failed",
+                                                  error=f"{type(exc).__name__}: {exc}",
+                                                  fatal=True),
+                                         None)
+                    self._commit(stat, outcome, checkpoint, store, failed)
         if abort is not None:
             raise abort
 

@@ -275,7 +275,8 @@ class AbortTest(unittest.TestCase):
         crawler = self.crawler(concurrency=3)
         with self.assertRaises(RiskAbort):
             crawler.run(first=1, last=8)
-        # 3 个在飞 + 队列里可能已经开跑的那一个；关键是 8 页没有全打出去。
+        # 取数改成按需提交后，在最飞的只有 workers 个，abort 之后不再补位，
+        # 所以命中数最多 3；留一页余量是给「abort 前已提交完」的边界情况。
         self.assertLessEqual(len(self.target.hits), 4,
                              "中止后仍把剩余页打完了")
 
