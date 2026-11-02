@@ -4,6 +4,8 @@
 
 **采集器的难点不是"能跑一次"，而是"能长期跑"。** 这个库只解决后者。
 
+![71 项测试全部通过](assets/tests.png)
+
 ```bash
 pip install -e .          # 或直接把 crawler_kit/ 复制进项目
 python -m unittest discover -s tests
