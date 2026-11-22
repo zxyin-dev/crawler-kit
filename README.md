@@ -1,5 +1,7 @@
 # crawler-kit
 
+![tests](https://github.com/zxyin-dev/crawler-kit/actions/workflows/test.yml/badge.svg)
+
 自用采集框架。零依赖核心，三个插件点，内建 TLS 指纹与并发。
 
 **采集器的难点不是"能跑一次"，而是"能长期跑"。** 这个库只解决后者。
